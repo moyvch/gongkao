@@ -142,30 +142,30 @@
     },
     {
       "name": "acw_sc__v2",
-      "value": "699d3825ce00dc91131d5a2e4269dcde9d41b08f",
+      "value": "69a632505bb566f6a96ced83392d2fb15a2d8086",
       "domain": "www.gongkaoleida.com",
       "path": "/",
-      "expires": -1,
+      "expires": 1772503137.832385,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "XSRF-TOKEN",
-      "value": "eyJpdiI6IjZpRWtCNWM4dDVmMzJGVG5BMHljTFE9PSIsInZhbHVlIjoiTGlUU2dxZCtpNVMrT054OWcrWFNxalB1VEFMM0FUVVp5eGltOTU1eEtRODRCZWVRbHRtQzZBUjU2Tmw1OEFheCIsIm1hYyI6IjIyMzI5YThmNWIxNzNkOTQ2NjFmYzMxNmRmZWJlYTBlM2YzYWFhYzI5MDFiZDlkODk0ZTg5MDIyNDIxNjYwYTUifQ%3D%3D",
+      "value": "eyJpdiI6InRkd3I3a0hWb0sxSXpNNFo4dFRWaEE9PSIsInZhbHVlIjoiTjFKb09IeUU0VkFhM1NUN21zaDR4ekNJQTg5SytweEhUUHVMUDRyQk9MRDBHYjZ3QXBnUERDcEVYRHYwVzBZbCIsIm1hYyI6IjgwYWRjNjQwYjU0ZWYyNGZiMzQ1NzYyYTg2NTI4NmU0M2FlOTg2OGZlYWQxYjcxMTVkNTI3NWIzZDZmOWUyMGQifQ%3D%3D",
       "domain": "www.gongkaoleida.com",
       "path": "/",
-      "expires": -1,
+      "expires": 1772585938.159903,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "gkld_session",
-      "value": "eyJpdiI6IlIrQ0NjOGNrTk1YamJrcENrb0lhZWc9PSIsInZhbHVlIjoiS0YycnhXbmlhTmZBSmoyVGloRURMbHQyYXd3XC93UE1HV2hVZTVya05JWkhCYmlPM29LVGlIMzY2QkdzQ3VUS05aaURDY0poRFNnNDNEY04zSFlRcnh4aWFkQmo0UzhYRUNXQ1lwQjk3YkF4RENRZzNwN2xmME1SN0Ircms3Z282IiwibWFjIjoiZDExMTBlNGM0MzllZGM0ODExOGZiYzMwMGVkNzFkZTg3ODFlM2ZmYTM3M2QzOGZhZWFjZjM2N2ZiMGE0YTc4NCJ9",
+      "value": "eyJpdiI6InhBQzBOMG81ZnVGcmQ2WHBKZENDM2c9PSIsInZhbHVlIjoid1NWRFduaWdqb013SjNUOU9HWVZTSzg0ZjVnRW4rVm0rZTNQY1lmNVg4Y2ZZcXlkUUJvSlBxd2pvSG5xNmZBcFZKMU5iOThRelJrb2dvVzFLeU0wRVpiZDhRRjdEenFqQzN2dWxFVmVUdGI0XC9ONDI0QUsxXC9JUXpQQm5aMlwvSjkiLCJtYWMiOiI3ZmUwMjY5OTMzY2I2MTM2ZWM2ODc5M2I3MzRkYzE2NDFmMGE0MzIwZjMyOGY5OWJkZDYyZjM0N2MzMGUwOTJkIn0%3D",
       "domain": "www.gongkaoleida.com",
       "path": "/",
-      "expires": -1,
+      "expires": 1772585938.162289,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
