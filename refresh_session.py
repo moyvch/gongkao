@@ -62,8 +62,8 @@ async def main():
             print(f"已备份旧session到: {backup_file}")
 
         # 启动Chrome浏览器（使用系统默认用户配置）
-        # macOS上的Chrome路径
-        chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        # Windows 路径
+        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
         browser = await p.chromium.launch(
             headless=False,
