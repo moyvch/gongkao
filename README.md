@@ -14,8 +14,8 @@
 
 ```
 gongkao/
-├── .env                     # API Key 和浏览器路径配置
-├── session.json             # 登录凭证（定期刷新）
+├── .env                     # API Key 和浏览器路径配置（需手动创建，示例见下方）
+├── session.json             # 登录凭证（运行 refresh_session.py 后自动生成）
 ├── jobs.xlsx                # 收藏的岗位数据
 ├── SKILL.md                 # WorkBuddy Skill 文档
 ├── README.md                # 本文档
@@ -43,12 +43,14 @@ playwright install chromium
 
 ### 2. 配置
 
-编辑 `.env` 文件：
+创建 `.env` 文件（从以下模板复制）：
 
 ```env
 MINIMAX_API_KEY=your_api_key_here
 CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
+
+> **注意**：`.env` 和 `session.json` 不在 Git 版本控制中（已加入 .gitignore），需要本地创建。
 
 ### 3. 首次登录
 
