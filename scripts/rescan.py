@@ -2,32 +2,39 @@
 # -*- coding: utf-8 -*-
 """
 历史数据回归脚本
-重新抓取 jobs.xlsx 中的历史记录，用 LLM 重新解析，更新字段
+重新抓取 jobs.xlsx 中的历史记录，用 LLM 重新解析，更新字段。
+
+用法:
+  python scripts/rescan.py           # 重新解析所有记录
+  python scripts/rescan.py --dry-run # 只列出需要更新的记录，不实际修改
 """
 import os
 import sys
 import re
-import json
 import time
-import subprocess
-from datetime import datetime
-from dotenv import load_dotenv
+import argparse
+import asyncio
 
 # 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+sys.path.insert(0, ROOT_DIR)
 
-from openpyxl import load_workbook
-import pandas as pd
+from dotenv import load_dotenv
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
-from scripts.parser import parse_job_info
+from scripts.logger  import get_logger
+from scripts.storage import get_all_jobs, update_field, HEADERS
+from scripts.parser  import parse_job_info
+from scripts.scraper import scrape_page
 
-EXCEL_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "jobs.xlsx")
+log = get_logger("rescan")
 
 
-def normalize_人数(value) -> str:
-    """标准化招录人数：若干→0"""
-    if pd.isna(value):
+# ── 字段标准化 ────────────────────────────────────────────────────
+
+def normalize_人数(value) -> int:
+    """标准化招录人数：若干 → 0"""
+    if value is None or str(value).strip() in ("", "nan"):
         return 0
     val = str(value).strip()
     if val in ("若干", "若干人", "不限", "若干名"):
@@ -38,195 +45,161 @@ def normalize_人数(value) -> str:
         return 0
 
 
-def normalize_投递方式(value) -> str:
-    """标准化投递方式格式"""
-    if pd.isna(value) or not str(value).strip() or str(value).strip() == "暂无":
-        return "暂无"
-
-    text = str(value).strip()
-
-    # 去掉"联系电话："前缀，统一格式
-    text = re.sub(r"^联系电话[：:]\s*", "", text)
-
-    # 去掉"电话："、"TEL："等前缀
-    text = re.sub(r"^(电话|TEL|手机|Mobile)[：:]\s*", "", text, flags=re.IGNORECASE)
-
-    # 清理多余空格
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # 如果是纯电话号码，加上"电话："前缀
-    phone_pattern = r"^[\d\-\(\)\s,，]+$"
-    if re.match(phone_pattern, text):
-        return "电话：" + text
-
-    return text
-
-
-def is_old_format_remark(remark: str) -> bool:
-    """判断备注是否为旧格式（职位介绍原文）"""
-    if pd.isna(remark) or not str(remark).strip():
-        return True
+def is_old_format_remark(remark) -> bool:
+    """判断备注是否为旧格式（职位介绍原文而非亮点提炼）"""
+    if not remark or str(remark).strip() in ("", "nan", "暂无"):
+        return False
 
     text = str(remark).strip()
 
-    # 新格式应该包含亮点关键词，而不是职位描述
-    old_format_indicators = [
-        "负责",
-        "职位介绍",
-        "智能监控体系建设",
-        "负责公司信息化",
-        "负责智能化矿山",
-        "负责书院水电",
-        "开展",
-        "推动",
-        "搭建",
+    old_indicators = [
+        "负责", "职位介绍", "开展", "推动", "搭建",
+        "智能监控", "信息化", "智能化矿山", "书院水电",
     ]
-
-    for indicator in old_format_indicators:
-        if text.startswith(indicator):
+    for ind in old_indicators:
+        if text.startswith(ind):
             return True
 
-    # 如果备注以编号列表开头（如 "1.负责..."），判定为旧格式
-    if re.match(r"^\d+[.、]", text):
-        return True
+    # 编号列表开头（如 "1.负责..."）
+    return bool(re.match(r"^\d+[.、]", text))
 
+
+def needs_update(job: dict) -> bool:
+    """判断一条记录是否需要重新解析"""
+    remark    = job.get("备注", "")
+    delivery  = str(job.get("投递方式", "")).strip()
+    headcount = str(job.get("招录人数", "")).strip()
+    deadline  = str(job.get("报名截止日期", "")).strip()
+
+    if is_old_format_remark(remark):
+        return True
+    if delivery in ("", "nan"):
+        return True
+    if headcount in ("若干", "若干人", "若干名"):
+        return True
+    if deadline in ("", "nan", "暂无"):
+        return True
     return False
 
 
-def rescan_single_row(row_idx: int, url: str) -> dict | None:
-    """重新抓取并解析单个记录"""
-    print(f"\n[{row_idx}] 正在处理: {url}")
+# ── 单条回归 ──────────────────────────────────────────────────────
 
+async def rescan_single_async(job: dict) -> dict | None:
+    """
+    重新抓取并解析单条记录。
+    返回需要更新的字段字典，失败返回 None。
+    """
+    url     = str(job.get("原始链接", "")).strip()
+    row_idx = job.get("_row")
+
+    if not url or url == "nan":
+        log.skip(f"[行 {row_idx}] 无有效链接，跳过")
+        return None
+
+    log.step(f"[行 {row_idx}] 处理: {url}")
     try:
-        # 1. 抓取页面（使用 subprocess 调用 scraper.py 避免 asyncio 冲突）
-        script_path = os.path.join(os.path.dirname(__file__), "scraper.py")
-        result = subprocess.run(
-            [sys.executable, script_path, url],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        page_data = await scrape_page(url, fetch_deadline=True)
+        job_info  = parse_job_info(page_data)
 
-        if result.returncode != 0:
-            print(f"[{row_idx}] 抓取失败: {result.stderr}")
-            return None
-
-        # scraper.py 输出格式：标题、URL、文本预览
-        # 我们需要获取完整文本，用 --full 参数或其他方式
-        # 简化处理：直接读取 scraper.py 输出的 JSON
-
-        # 实际上 scraper.py 没有 JSON 输出，我们需要修改它或者手动解析
-        # 这里改为直接调用 async 函数
-        import asyncio
-        from scripts.scraper import scrape_page
-
-        page_data = asyncio.run(scrape_page(url))
-
-        # 2. LLM 解析
-        job_info = parse_job_info(page_data)
-
-        # 3. 标准化字段
-        招录人数 = normalize_人数(job_info.get("招录人数", 0))
-        投递方式 = normalize_投递方式(job_info.get("投递方式", "暂无"))
-        备注 = job_info.get("备注", "暂无")
-
-        return {
-            "招录人数": 招录人数,
-            "投递方式": 投递方式,
-            "备注": 备注,
+        updates = {
+            "招录人数":    normalize_人数(job_info.get("招录人数", 0)),
+            "投递方式":    job_info.get("投递方式", "暂无"),
+            "备注":       job_info.get("备注", "暂无"),
+            "报名截止日期": job_info.get("报名截止日期", "暂无"),
         }
 
+        # 若 LLM 未获取到截止日期，尝试用 scraper 从 PC 端补全
+        if page_data.get("deadline") and updates["报名截止日期"] in ("暂无", "", None):
+            updates["报名截止日期"] = page_data["deadline"]
+            log.info(f"  截止日期来自 PC 端: {page_data['deadline']}")
+
+        return updates
+
     except Exception as e:
-        print(f"[{row_idx}] 处理失败: {e}")
-        import traceback
-        traceback.print_exc()
+        log.fail(f"[行 {row_idx}] 处理失败: {e}")
         return None
 
 
-def rescan_all():
-    """主函数：重新处理所有历史记录"""
-    print("=" * 60)
-    print("历史数据回归脚本")
-    print("=" * 60)
+# ── 批量回归（单一事件循环）─────────────────────────────────────────
 
-    # 读取 Excel
-    df = pd.read_excel(EXCEL_FILE)
-    total = len(df)
+async def rescan_batch(jobs: list[dict]) -> list[dict | None]:
+    """
+    批量重新抓取并解析（单一事件循环）。
+    所有任务共享一个 Playwright 实例，显著提升性能。
+    """
+    tasks = [rescan_single_async(j) for j in jobs]
+    return await asyncio.gather(*tasks, return_exceptions=True)
 
-    if total == 0:
-        print("没有找到历史数据")
+
+# ── 主流程 ────────────────────────────────────────────────────────
+
+def rescan_all(dry_run: bool = False):
+    log.section("历史数据回归脚本")
+
+    jobs = get_all_jobs()
+    if not jobs:
+        log.warn("没有找到历史数据")
         return
 
-    print(f"共找到 {total} 条历史记录")
+    total = len(jobs)
+    log.info(f"共 {total} 条历史记录")
 
-    # 统计需要更新的记录
-    need_update = 0
-    for idx, row in df.iterrows():
-        remark = row.get("备注", "")
-        投递方式 = row.get("投递方式", "")
-        招录人数 = row.get("招录人数", "")
+    # 列出需要更新的记录
+    to_update = [j for j in jobs if needs_update(j)]
+    log.info(f"需要重新解析: {len(to_update)}/{total} 条")
 
-        if is_old_format_remark(remark) or str(投递方式) == "nan" or str(招录人数) == "若干":
-            need_update += 1
-            print(f"\n[记录 {idx + 1}] 需要更新:")
-            print(f"  备注: {str(remark)[:80]}...")
-            print(f"  投递方式: {投递方式}")
-            print(f"  招录人数: {招录人数}")
+    if not to_update:
+        log.ok("所有记录均已是最新格式，无需更新")
+        return
 
-    print(f"\n需要更新的记录: {need_update}/{total}")
-    print("\n开始重新抓取和解析...\n")
+    for j in to_update:
+        log.info(
+            f"  [行 {j['_row']}] {j.get('岗位名称', '-')} "
+            f"| 备注旧格式={is_old_format_remark(j.get('备注'))} "
+            f"| 截止={j.get('报名截止日期')}"
+        )
 
-    # 逐条处理（避免并发导致 session 问题）
-    results = []
-    for idx, row in df.iterrows():
-        url = row.get("原始链接", "")
+    if dry_run:
+        log.info("（--dry-run 模式，不执行实际更新）")
+        return
 
-        if not url or str(url) == "nan":
-            print(f"[跳过] 第 {idx + 1} 条: 无有效链接")
-            results.append(None)
-            continue
+    log.info("\n开始重新抓取和解析...\n")
 
-        result = rescan_single_row(idx + 1, url)
-        results.append(result)
-
-        # 避免请求过快
-        if idx < total - 1:
-            time.sleep(3)
-
-    # 写入更新
-    print("\n" + "=" * 60)
-    print("更新 Excel 文件...")
-    print("=" * 60)
-
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
+    # 批量并发处理（单一事件循环，性能优化）
+    results = asyncio.run(rescan_batch(to_update))
 
     updated_count = 0
-    for idx, (result, row) in enumerate(zip(results, df.itertuples()), start=0):
-        excel_row = idx + 2  # Excel 行号（跳过表头）
+    for job, result in zip(to_update, results):
+        row_idx = job["_row"]
 
-        if result is None:
-            print(f"[{idx + 1}] 跳过（无结果）")
-            continue
+        if isinstance(result, Exception):
+            log.fail(f"[行 {row_idx}] 失败: {result}")
+        elif result is None:
+            log.skip(f"[行 {row_idx}] 跳过（无结果）")
+        else:
+            for field, value in result.items():
+                update_field(row_idx, field, value)
+            log.ok(
+                f"[行 {row_idx}] 已更新 "
+                f"| 人数={result['招录人数']} "
+                f"| 截止={result['报名截止日期']} "
+                f"| 投递={str(result['投递方式'])[:25]}..."
+            )
+            updated_count += 1
 
-        # 更新招录人数
-        ws.cell(row=excel_row, column=5, value=result["招录人数"])
+        # 限速，避免请求过快
+        time.sleep(3)
 
-        # 更新投递方式
-        ws.cell(row=excel_row, column=9, value=result["投递方式"])
-
-        # 更新备注
-        ws.cell(row=excel_row, column=12, value=result["备注"])
-
-        updated_count += 1
-        print(f"[{idx + 1}] 已更新: 招录人数={result['招录人数']}, 投递方式={result['投递方式'][:30]}...")
-
-    wb.save(EXCEL_FILE)
-    print(f"\n完成！已更新 {updated_count} 条记录")
+    log.section("回归完成")
+    log.summary(total=len(to_update), success=updated_count, fail=len(to_update) - updated_count)
 
 
 def main():
-    rescan_all()
+    parser = argparse.ArgumentParser(description="历史数据回归脚本")
+    parser.add_argument("--dry-run", action="store_true", help="只列出需要更新的记录，不修改")
+    args = parser.parse_args()
+
+    rescan_all(dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

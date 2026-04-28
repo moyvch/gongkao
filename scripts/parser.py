@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 MiniMax LLM 解析模块
 将页面文本发送给 MiniMax，提取结构化岗位信息
@@ -6,7 +7,12 @@ MiniMax LLM 解析模块
 import os
 import json
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
+from scripts.logger import get_logger
+
+log = get_logger("parser")
 
 # 加载 .env 配置
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -81,10 +87,15 @@ def parse_job_info(page_data: dict) -> dict:
         "max_tokens": 1024,
     }
 
-    print("正在调用 MiniMax LLM 解析岗位信息...")
+    log.step("调用 MiniMax LLM 解析岗位信息...")
+
+    # 配置请求 session，自动重试 3 次（网络波动时更加健壮）
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.5, status_forcelist={500, 502, 503, 504})
+    session.mount("https://", HTTPAdapter(max_retries=retry))
 
     try:
-        response = requests.post(
+        response = session.post(
             MINIMAX_API_URL,
             headers=headers,
             json=payload,
@@ -138,7 +149,7 @@ def _extract_json(text: str) -> dict:
                 pass
 
         # 解析失败，返回默认结构
-        print(f"警告：JSON 解析失败，LLM 原始输出：\n{text[:500]}")
+        log.warn(f"警告：JSON 解析失败，LLM 原始输出：\n{text[:500]}")
         return {
             "岗位名称": "解析失败",
             "招聘单位": "",
